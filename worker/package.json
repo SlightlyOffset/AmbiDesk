@@ -5,6 +5,7 @@
   "description": "AmbiDesk Cloudflare Worker micro-aggregator for Open-Meteo",
   "main": "src/index.js",
   "scripts": {
+    "start": "node dev-server.js",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },
