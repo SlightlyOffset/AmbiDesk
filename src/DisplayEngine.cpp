@@ -121,6 +121,43 @@ void DisplayEngine::renderTemperature(int8_t tempC) {
     commitFrame();
 }
 
+void DisplayEngine::drawPercent(uint8_t startCol, uint8_t startRow) {
+    if (startCol > 9 || startRow > 3) {
+        return;
+    }
+    // Row 0: 1 0 1
+    m_frame[startRow + 0][startCol + 0] = 1;
+    m_frame[startRow + 0][startCol + 2] = 1;
+    // Row 1: 0 0 1
+    m_frame[startRow + 1][startCol + 2] = 1;
+    // Row 2: 0 1 0
+    m_frame[startRow + 2][startCol + 1] = 1;
+    // Row 3: 1 0 0
+    m_frame[startRow + 3][startCol + 0] = 1;
+    // Row 4: 1 0 1
+    m_frame[startRow + 4][startCol + 0] = 1;
+    m_frame[startRow + 4][startCol + 2] = 1;
+}
+
+void DisplayEngine::renderPoP(uint8_t pop) {
+    clearBuffer();
+
+    uint8_t clampedPop = (pop > 99) ? 99 : pop;
+    const uint8_t baseRow = 1;
+
+    if (clampedPop >= 10) {
+        uint8_t tens = clampedPop / 10;
+        uint8_t ones = clampedPop % 10;
+        drawDigit(tens, 1, baseRow);
+        drawDigit(ones, 5, baseRow);
+    } else {
+        drawDigit(clampedPop, 4, baseRow);
+    }
+
+    drawPercent(9, baseRow);
+    commitFrame();
+}
+
 void DisplayEngine::renderBoot() {
     renderIcon(ICON_BOOT);
 }

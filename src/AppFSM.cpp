@@ -78,6 +78,10 @@ void AppFSM::handleDispIcon(uint32_t currentMillis) {
     }
 
     if (currentMillis - m_stateTimerMs >= SLOT_A_ICON_MS) {
+        Serial.print("[FSM] Slot A complete -> Slot B: Temp ");
+        Serial.print(m_data.currentTemp);
+        Serial.println("C");
+
         m_state = STATE_DISP_TEMP;
         m_stateTimerMs = currentMillis;
         m_display.renderTemperature(m_data.currentTemp);
@@ -93,10 +97,20 @@ void AppFSM::handleDispTemp(uint32_t currentMillis) {
 
     if (currentMillis - m_stateTimerMs >= SLOT_B_TEMP_MS) {
         if (m_data.pop > POP_ALERT_THRESHOLD) {
+            Serial.print("[FSM] Slot B complete -> Slot C (Alert): Rain PoP ");
+            Serial.print(m_data.pop);
+            Serial.println("%");
+
             m_state = STATE_DISP_ALERT;
             m_stateTimerMs = currentMillis;
-            m_display.renderIcon(m_data.nextIcon);
+            m_display.renderPoP(m_data.pop);
         } else {
+            Serial.print("[FSM] Slot B complete -> Slot A: Weather Icon ");
+            Serial.print(m_data.currentIcon);
+            Serial.print(" (PoP ");
+            Serial.print(m_data.pop);
+            Serial.println("% <= threshold)");
+
             m_state = STATE_DISP_ICON;
             m_stateTimerMs = currentMillis;
             m_display.renderIcon(m_data.currentIcon);
@@ -112,6 +126,9 @@ void AppFSM::handleDispAlert(uint32_t currentMillis) {
     }
 
     if (currentMillis - m_stateTimerMs >= SLOT_C_ALERT_MS) {
+        Serial.print("[FSM] Slot C complete -> Slot A: Weather Icon ");
+        Serial.println(m_data.currentIcon);
+
         m_state = STATE_DISP_ICON;
         m_stateTimerMs = currentMillis;
         m_display.renderIcon(m_data.currentIcon);

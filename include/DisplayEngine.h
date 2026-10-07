@@ -19,6 +19,9 @@ public:
     // Render 2-digit temperature in Celsius (-40C to 99C)
     void renderTemperature(int8_t tempC);
 
+    // Render 2-digit precipitation probability percentage (0% to 99%)
+    void renderPoP(uint8_t pop);
+
     // Render boot/startup logo
     void renderBoot();
 
@@ -38,4 +41,5 @@ private:
     void drawDigit(uint8_t digit, uint8_t startCol, uint8_t startRow);
     void drawMinus(uint8_t startCol, uint8_t startRow);
     void drawUnitC(uint8_t startCol, uint8_t startRow);
+    void drawPercent(uint8_t startCol, uint8_t startRow);
 };
