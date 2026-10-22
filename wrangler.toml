@@ -1,0 +1,7 @@
+name = "ambidesk"
+main = "worker/src/index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+DEFAULT_LAT = "13.72"
+DEFAULT_LON = "100.77"

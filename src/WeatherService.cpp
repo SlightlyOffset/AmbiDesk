@@ -75,30 +75,38 @@ bool WeatherService::isConnected() const {
 
 bool WeatherService::skipToBody(WiFiClient& client, uint32_t startMs, uint32_t timeoutMs) {
     assert(timeoutMs > 0);
-    uint16_t skipBytes = 0;
+    uint16_t headerBytes = 0;
     uint16_t waitCycles = 0;
-    constexpr uint16_t MAX_HEADER_SCAN = 1024;
+    uint8_t matchState = 0; // State machine matching \r\n\r\n (or \n\n)
+    constexpr uint16_t MAX_HEADER_SCAN = 4096;
     constexpr uint16_t MAX_HEADER_WAIT_CYCLES = 1600; // 1600 * 5ms = 8000ms max
 
     while ((client.connected() || client.available()) && 
-           (skipBytes < MAX_HEADER_SCAN) && 
+           (headerBytes < MAX_HEADER_SCAN) && 
            (waitCycles < MAX_HEADER_WAIT_CYCLES) && 
            (millis() - startMs < timeoutMs)) {
-        if (client.available()) {
-            char c = static_cast<char>(client.read());
-            skipBytes++;
-            if (c == '{') {
-                m_payloadBuffer[0] = '{';
-                assert(skipBytes <= MAX_HEADER_SCAN);
+        if (!client.available()) {
+            delay(5);
+            waitCycles++;
+            continue;
+        }
+        char c = static_cast<char>(client.read());
+        headerBytes++;
+
+        if ((matchState == 0 || matchState == 2) && c == '\r') {
+            matchState++;
+        } else if (c == '\n') {
+            matchState = (matchState >= 2) ? 4 : 2;
+            if (matchState == 4) {
+                assert(headerBytes <= MAX_HEADER_SCAN);
                 return true;
             }
         } else {
-            delay(5);
-            waitCycles++;
+            matchState = 0;
         }
     }
-    assert(skipBytes <= MAX_HEADER_SCAN);
-    assert(waitCycles <= MAX_HEADER_WAIT_CYCLES);
+    assert(headerBytes <= MAX_HEADER_SCAN);
+    Serial.println("Failed to parse HTTP headers.");
     return false;
 }
 
@@ -118,26 +126,42 @@ bool WeatherService::readHttpResponse(WiFiClient& client, uint32_t timeoutMs) {
         return false;
     }
 
-    uint16_t bufIndex = 1;
+    uint16_t bufIndex = 0;
     const uint16_t maxBuf = static_cast<uint16_t>(sizeof(m_payloadBuffer) - 1);
     uint16_t idleCycles = 0;
+    uint8_t braceDepth = 0;
+    bool foundJsonStart = false;
     constexpr uint16_t MAX_IDLE_CYCLES = 100; // 100 * 10ms = 1000ms max idle
 
     while ((client.connected() || client.available()) && 
            (bufIndex < maxBuf) && 
            (millis() - startMs < timeoutMs) && 
            (idleCycles < MAX_IDLE_CYCLES)) {
-        if (client.available()) {
-            m_payloadBuffer[bufIndex++] = static_cast<char>(client.read());
-            idleCycles = 0;
-        } else {
+        if (!client.available()) {
             delay(10);
             idleCycles++;
+            continue;
+        }
+        idleCycles = 0;
+        char c = static_cast<char>(client.read());
+        if (!foundJsonStart) {
+            if (c == '{') {
+                foundJsonStart = true;
+                braceDepth = 1;
+                m_payloadBuffer[bufIndex++] = c;
+            }
+            continue;
+        }
+        m_payloadBuffer[bufIndex++] = c;
+        if (c == '{' && braceDepth < 255) braceDepth++;
+        else if (c == '}' && braceDepth > 0) {
+            braceDepth--;
+            if (braceDepth == 0) break; // Finished root JSON object
         }
     }
     m_payloadBuffer[bufIndex] = '\0';
     assert(bufIndex < sizeof(m_payloadBuffer));
-    return (bufIndex > 1);
+    return (foundJsonStart && braceDepth == 0 && bufIndex > 1);
 }
 
 bool WeatherService::sendGetRequest(WiFiClient& client, const char* host, const char* path) {

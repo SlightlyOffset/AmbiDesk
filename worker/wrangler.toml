@@ -1,4 +1,4 @@
-name = "ambidesk-aggregator"
+name = "ambidesk"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
