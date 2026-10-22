@@ -1,13 +1,15 @@
 #include <Arduino.h>
 #include "Config.h"
 #include "DisplayEngine.h"
+#include "LcdDisplay.h"
 #include "WeatherService.h"
 #include "AppFSM.h"
 
 // Static instance allocations (NASA Power of Ten Rule 3: Zero heap allocation)
 static DisplayEngine  g_display;
+static LcdDisplay     g_lcd;
 static WeatherService g_weather;
-static AppFSM         g_fsm(g_display, g_weather);
+static AppFSM         g_fsm(g_display, g_lcd, g_weather);
 
 void setup() {
     Serial.begin(115200);

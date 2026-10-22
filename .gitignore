@@ -4,3 +4,4 @@ compile_commands.json
 include/secrets.h
 worker/node_modules
 .wrangler
+.vscode

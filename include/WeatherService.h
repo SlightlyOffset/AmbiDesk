@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <WiFiS3.h>
+#include "Config.h"
 #include "WeatherData.h"
 
 // WeatherService manages Wi-Fi state and HTTP/HTTPS communication with the micro-aggregator.
@@ -23,7 +24,7 @@ public:
     bool isConnected() const;
 
 private:
-    char m_payloadBuffer[512]; // Fixed static response buffer
+    char m_payloadBuffer[MAX_RESPONSE_BYTES]; // Fixed static response buffer
 
     // Bounded HTTP execution helpers (<= 60 lines each)
     bool executeHttpRequest(const char* host, uint16_t port, const char* path, bool useSsl);
