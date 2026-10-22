@@ -1,76 +1,168 @@
 #include "AppFSM.h"
 #include "Config.h"
 #include <Arduino.h>
+#include <assert.h>
 
-AppFSM::AppFSM(DisplayEngine& display, WeatherService& weather)
+AppFSM::AppFSM(DisplayEngine& display, LcdDisplay& lcd, WeatherService& weather)
     : m_display(display),
+      m_lcd(lcd),
       m_weather(weather),
       m_state(STATE_BOOT),
       m_stateTimerMs(0),
-      m_lastPollMs(0) {
+      m_lastPollMs(0),
+      m_selectedSlot(0),
+      m_inspectTimerMs(0),
+      m_lastButtonReading(HIGH),
+      m_debouncedButtonState(HIGH),
+      m_lastDebounceMs(0) {
     m_data.reset();
+    assert(m_state == STATE_BOOT);
+    assert(!m_data.isValid);
 }
 
 void AppFSM::init() {
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    m_lastButtonReading = static_cast<uint8_t>(digitalRead(BUTTON_PIN));
+    m_debouncedButtonState = m_lastButtonReading;
+    m_lastDebounceMs = millis();
+
     m_display.init();
     m_display.renderBoot();
+    m_lcd.init();
+    m_lcd.showBoot("Starting up...");
     m_state = STATE_BOOT;
     m_stateTimerMs = millis();
     m_lastPollMs = 0;
-    Serial.println("[FSM] Initialized. Entering STATE_BOOT.");
+    m_selectedSlot = 0;
+    assert(m_state == STATE_BOOT);
+    assert(m_selectedSlot == 0);
+
+    Serial.print("[FSM] Initialized with Button on Pin ");
+    Serial.print(BUTTON_PIN);
+    Serial.println(". Entering STATE_BOOT.");
 }
 
 AppState AppFSM::getState() const {
+    assert(m_state <= STATE_ERROR);
     return m_state;
 }
 
 const WeatherData& AppFSM::getData() const {
+    assert(m_data.slotCount <= FORECAST_SLOTS_COUNT);
     return m_data;
 }
 
+uint8_t AppFSM::getSelectedSlot() const {
+    assert(m_selectedSlot < FORECAST_SLOTS_COUNT);
+    return m_selectedSlot;
+}
+
+void AppFSM::checkButton(uint32_t currentMillis) {
+    uint8_t reading = static_cast<uint8_t>(digitalRead(BUTTON_PIN));
+    assert(reading == LOW || reading == HIGH);
+
+    if (reading != m_lastButtonReading) {
+        m_lastDebounceMs = currentMillis;
+        m_lastButtonReading = reading;
+    }
+
+    if ((currentMillis - m_lastDebounceMs) >= BUTTON_DEBOUNCE_MS) {
+        if (reading != m_debouncedButtonState) {
+            m_debouncedButtonState = reading;
+            assert(m_debouncedButtonState == reading);
+            if (m_debouncedButtonState == LOW) {
+                handleButtonPress(currentMillis);
+            }
+        }
+    }
+}
+
+void AppFSM::handleButtonPress(uint32_t currentMillis) {
+    if (!m_data.isValid || m_data.slotCount == 0 || m_data.slotCount > FORECAST_SLOTS_COUNT) {
+        Serial.println("[Button] Click detected, but weather data is not ready yet.");
+        return;
+    }
+    assert(m_data.slotCount > 0 && m_data.slotCount <= FORECAST_SLOTS_COUNT);
+
+    m_selectedSlot = static_cast<uint8_t>((m_selectedSlot + 1) % m_data.slotCount);
+    assert(m_selectedSlot < m_data.slotCount);
+    const ForecastSlot& selectedSlot = m_data.slots[m_selectedSlot];
+
+    Serial.print("[Button] Click! Switched to Slot ");
+    Serial.print(m_selectedSlot);
+    Serial.print(" (");
+    Serial.print(selectedSlot.label);
+    Serial.println(")");
+
+    if (m_selectedSlot == 0) {
+        Serial.println("[Button] Cycled back to Present (Now)");
+        m_state = STATE_DISP_ICON;
+        m_stateTimerMs = currentMillis;
+        m_lcd.showForecastSlot(selectedSlot);
+        m_display.renderIcon(selectedSlot.icon);
+    } else {
+        m_state = STATE_INSPECT;
+        m_inspectTimerMs = currentMillis;
+        m_lcd.showForecastSlot(selectedSlot);
+        m_display.renderIcon(selectedSlot.icon);
+    }
+}
+
 void AppFSM::handleBoot(uint32_t currentMillis) {
+    assert(m_state == STATE_BOOT);
     Serial.println("[FSM] STATE_BOOT: Connecting to Wi-Fi...");
+    m_lcd.showBoot("Connecting WiFi");
     bool wifiOk = m_weather.ensureWifiConnected(WIFI_SSID, WIFI_PASSWORD, WIFI_TIMEOUT_MS);
     if (wifiOk) {
         Serial.println("[FSM] Wi-Fi OK -> Transition to STATE_FETCH");
+        m_lcd.showBoot("WiFi OK! Syncing");
         m_state = STATE_FETCH;
         m_stateTimerMs = currentMillis;
     } else {
         Serial.println("[FSM] Wi-Fi Failed -> Transition to STATE_ERROR");
         m_display.renderError();
+        m_lcd.showError("WiFi Conn Failed");
         m_state = STATE_ERROR;
         m_stateTimerMs = currentMillis;
     }
+    assert(m_state == STATE_FETCH || m_state == STATE_ERROR);
 }
 
 void AppFSM::handleFetch(uint32_t currentMillis) {
+    assert(m_state == STATE_FETCH);
     Serial.println("[FSM] STATE_FETCH: Requesting weather data...");
+    m_lcd.showFetching();
     bool fetchOk = m_weather.fetchWeather(AGGREGATOR_HOST, AGGREGATOR_PORT, AGGREGATOR_PATH, AGGREGATOR_USE_SSL, m_data);
 
     if (fetchOk && m_data.isValid) {
-        Serial.print("[FSM] Fetch Success: Temp=");
+        Serial.print("[FSM] Fetch Success: Slots=");
+        Serial.print(m_data.slotCount);
+        Serial.print(", Now Temp=");
         Serial.print(m_data.currentTemp);
         Serial.print("C, Icon=");
         Serial.print(m_data.currentIcon);
-        Serial.print(", NextIcon=");
-        Serial.print(m_data.nextIcon);
         Serial.print(", PoP=");
         Serial.print(m_data.pop);
         Serial.println("%");
 
+        m_selectedSlot = 0;
         m_lastPollMs = currentMillis;
         m_state = STATE_DISP_ICON;
         m_stateTimerMs = currentMillis;
         m_display.renderIcon(m_data.currentIcon);
+        m_lcd.showWeather(m_data);
     } else {
         Serial.println("[FSM] Fetch Failed -> Transition to STATE_ERROR");
         m_display.renderError();
+        m_lcd.showError("Fetch Failed");
         m_state = STATE_ERROR;
         m_stateTimerMs = currentMillis;
     }
+    assert(m_state == STATE_DISP_ICON || m_state == STATE_ERROR);
 }
 
 void AppFSM::handleDispIcon(uint32_t currentMillis) {
+    assert(m_state == STATE_DISP_ICON);
     if (currentMillis - m_lastPollMs >= POLL_INTERVAL_MS) {
         m_state = STATE_FETCH;
         m_stateTimerMs = currentMillis;
@@ -78,17 +170,15 @@ void AppFSM::handleDispIcon(uint32_t currentMillis) {
     }
 
     if (currentMillis - m_stateTimerMs >= SLOT_A_ICON_MS) {
-        Serial.print("[FSM] Slot A complete -> Slot B: Temp ");
-        Serial.print(m_data.currentTemp);
-        Serial.println("C");
-
         m_state = STATE_DISP_TEMP;
         m_stateTimerMs = currentMillis;
         m_display.renderTemperature(m_data.currentTemp);
     }
+    assert(m_state == STATE_DISP_ICON || m_state == STATE_DISP_TEMP);
 }
 
 void AppFSM::handleDispTemp(uint32_t currentMillis) {
+    assert(m_state == STATE_DISP_TEMP);
     if (currentMillis - m_lastPollMs >= POLL_INTERVAL_MS) {
         m_state = STATE_FETCH;
         m_stateTimerMs = currentMillis;
@@ -97,28 +187,20 @@ void AppFSM::handleDispTemp(uint32_t currentMillis) {
 
     if (currentMillis - m_stateTimerMs >= SLOT_B_TEMP_MS) {
         if (m_data.pop > POP_ALERT_THRESHOLD) {
-            Serial.print("[FSM] Slot B complete -> Slot C (Alert): Rain PoP ");
-            Serial.print(m_data.pop);
-            Serial.println("%");
-
             m_state = STATE_DISP_ALERT;
             m_stateTimerMs = currentMillis;
             m_display.renderPoP(m_data.pop);
         } else {
-            Serial.print("[FSM] Slot B complete -> Slot A: Weather Icon ");
-            Serial.print(m_data.currentIcon);
-            Serial.print(" (PoP ");
-            Serial.print(m_data.pop);
-            Serial.println("% <= threshold)");
-
             m_state = STATE_DISP_ICON;
             m_stateTimerMs = currentMillis;
             m_display.renderIcon(m_data.currentIcon);
         }
     }
+    assert(m_state <= STATE_DISP_ALERT);
 }
 
 void AppFSM::handleDispAlert(uint32_t currentMillis) {
+    assert(m_state == STATE_DISP_ALERT);
     if (currentMillis - m_lastPollMs >= POLL_INTERVAL_MS) {
         m_state = STATE_FETCH;
         m_stateTimerMs = currentMillis;
@@ -126,50 +208,70 @@ void AppFSM::handleDispAlert(uint32_t currentMillis) {
     }
 
     if (currentMillis - m_stateTimerMs >= SLOT_C_ALERT_MS) {
-        Serial.print("[FSM] Slot C complete -> Slot A: Weather Icon ");
-        Serial.println(m_data.currentIcon);
-
         m_state = STATE_DISP_ICON;
         m_stateTimerMs = currentMillis;
         m_display.renderIcon(m_data.currentIcon);
     }
+    assert(m_state == STATE_DISP_ALERT || m_state == STATE_DISP_ICON);
+}
+
+void AppFSM::handleInspect(uint32_t currentMillis) {
+    assert(m_state == STATE_INSPECT);
+    if (currentMillis - m_inspectTimerMs >= USER_INSPECT_TIMEOUT_MS) {
+        Serial.println("[FSM] Inspect timeout -> returning to Present (Now)");
+        m_selectedSlot = 0;
+        m_state = STATE_DISP_ICON;
+        m_stateTimerMs = currentMillis;
+        if (m_data.slotCount > 0) {
+            const ForecastSlot& nowSlot = m_data.slots[0];
+            m_lcd.showForecastSlot(nowSlot);
+            m_display.renderIcon(nowSlot.icon);
+        } else {
+            m_lcd.showWeather(m_data);
+        }
+        return;
+    }
+
+    if (currentMillis - m_lastPollMs >= POLL_INTERVAL_MS) {
+        m_selectedSlot = 0;
+        m_state = STATE_FETCH;
+        m_stateTimerMs = currentMillis;
+    }
+    assert(m_state == STATE_INSPECT || m_state == STATE_FETCH);
 }
 
 void AppFSM::handleError(uint32_t currentMillis) {
+    assert(m_state == STATE_ERROR);
     if (currentMillis - m_stateTimerMs >= ERROR_RETRY_MS) {
         Serial.println("[FSM] Error backoff elapsed. Retrying fetch...");
         if (!m_weather.isConnected()) {
+            m_lcd.showBoot("Reconnecting...");
             m_state = STATE_BOOT;
         } else {
+            m_lcd.showFetching();
             m_state = STATE_FETCH;
         }
         m_stateTimerMs = currentMillis;
     }
+    assert(m_state == STATE_ERROR || m_state == STATE_BOOT || m_state == STATE_FETCH);
 }
 
 void AppFSM::update(uint32_t currentMillis) {
+    assert(m_state <= STATE_ERROR);
+    checkButton(currentMillis);
+
     switch (m_state) {
-        case STATE_BOOT:
-            handleBoot(currentMillis);
-            break;
-        case STATE_FETCH:
-            handleFetch(currentMillis);
-            break;
-        case STATE_DISP_ICON:
-            handleDispIcon(currentMillis);
-            break;
-        case STATE_DISP_TEMP:
-            handleDispTemp(currentMillis);
-            break;
-        case STATE_DISP_ALERT:
-            handleDispAlert(currentMillis);
-            break;
-        case STATE_ERROR:
-            handleError(currentMillis);
-            break;
+        case STATE_BOOT:       handleBoot(currentMillis);      break;
+        case STATE_FETCH:      handleFetch(currentMillis);     break;
+        case STATE_DISP_ICON:  handleDispIcon(currentMillis);  break;
+        case STATE_DISP_TEMP:  handleDispTemp(currentMillis);  break;
+        case STATE_DISP_ALERT: handleDispAlert(currentMillis); break;
+        case STATE_INSPECT:    handleInspect(currentMillis);   break;
+        case STATE_ERROR:      handleError(currentMillis);     break;
         default:
             m_state = STATE_BOOT;
             m_stateTimerMs = currentMillis;
             break;
     }
+    assert(m_state <= STATE_ERROR);
 }
