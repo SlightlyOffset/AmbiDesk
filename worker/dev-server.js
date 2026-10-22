@@ -29,7 +29,11 @@ const server = http.createServer(async (req, res) => {
     const workerRes = await worker.fetch(request, {}, {});
     const bodyText = await workerRes.text();
 
-    res.writeHead(workerRes.status, Object.fromEntries(workerRes.headers.entries()));
+    const headers = Object.fromEntries(workerRes.headers.entries());
+    headers["Content-Length"] = Buffer.byteLength(bodyText);
+    headers["Connection"] = "close";
+
+    res.writeHead(workerRes.status, headers);
     res.end(bodyText);
 
     const timestamp = new Date().toLocaleTimeString();

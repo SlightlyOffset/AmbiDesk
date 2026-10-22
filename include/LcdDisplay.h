@@ -10,10 +10,12 @@
 class LcdDisplay {
 public:
     static constexpr uint8_t CUSTOM_CHAR_DEGREE = 1; // Custom CGRAM slot for degree symbol (°)
+    static constexpr uint8_t MAX_LCD_COLS = 20;      // Static upper bound for LCD columns
+    static constexpr uint8_t MAX_LCD_ROWS = 4;       // Static upper bound for LCD rows
 
     explicit LcdDisplay(uint8_t addr = LCD_I2C_ADDR, uint8_t cols = LCD_COLS, uint8_t rows = LCD_ROWS);
 
-    // Initialize I2C LCD peripheral and backlight
+    // Initialize I2C LCD peripheral and backlight (called strictly once at setup)
     void init();
 
     // Display boot splash or initialization progress
@@ -25,7 +27,7 @@ public:
     // Display a specific forecast slot (Day/Time label replaces condition on line 1)
     void showForecastSlot(const ForecastSlot& slot);
 
-    // Display background update notification
+    // Display background update notification across both lines
     void showFetching();
 
     // Display error alert with message

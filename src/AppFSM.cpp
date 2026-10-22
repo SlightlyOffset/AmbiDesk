@@ -1,6 +1,7 @@
 #include "AppFSM.h"
 #include "Config.h"
 #include <Arduino.h>
+#include <assert.h>
 
 AppFSM::AppFSM(DisplayEngine& display, LcdDisplay& lcd, WeatherService& weather)
     : m_display(display),
@@ -18,9 +19,8 @@ AppFSM::AppFSM(DisplayEngine& display, LcdDisplay& lcd, WeatherService& weather)
 }
 
 void AppFSM::init() {
-    // Configure button with internal pull-up resistor (Active LOW)
     pinMode(BUTTON_PIN, INPUT_PULLUP);
-    m_lastButtonReading = digitalRead(BUTTON_PIN);
+    m_lastButtonReading = static_cast<uint8_t>(digitalRead(BUTTON_PIN));
     m_debouncedButtonState = m_lastButtonReading;
     m_lastDebounceMs = millis();
 
@@ -32,7 +32,10 @@ void AppFSM::init() {
     m_stateTimerMs = millis();
     m_lastPollMs = 0;
     m_selectedSlot = 0;
-    Serial.println("[FSM] Initialized with Button on Pin 2. Entering STATE_BOOT.");
+
+    Serial.print("[FSM] Initialized with Button on Pin ");
+    Serial.print(BUTTON_PIN);
+    Serial.println(". Entering STATE_BOOT.");
 }
 
 AppState AppFSM::getState() const {
@@ -48,19 +51,16 @@ uint8_t AppFSM::getSelectedSlot() const {
 }
 
 void AppFSM::checkButton(uint32_t currentMillis) {
-    uint8_t reading = digitalRead(BUTTON_PIN);
+    uint8_t reading = static_cast<uint8_t>(digitalRead(BUTTON_PIN));
 
-    // If signal changed, reset debounce timer
     if (reading != m_lastButtonReading) {
         m_lastDebounceMs = currentMillis;
         m_lastButtonReading = reading;
     }
 
-    // When reading is stable for BUTTON_DEBOUNCE_MS
     if ((currentMillis - m_lastDebounceMs) >= BUTTON_DEBOUNCE_MS) {
         if (reading != m_debouncedButtonState) {
             m_debouncedButtonState = reading;
-            // Button pressed down (Active LOW with INPUT_PULLUP)
             if (m_debouncedButtonState == LOW) {
                 handleButtonPress(currentMillis);
             }
@@ -73,29 +73,28 @@ void AppFSM::handleButtonPress(uint32_t currentMillis) {
         Serial.println("[Button] Click detected, but weather data is not ready yet.");
         return;
     }
+    assert(m_data.slotCount > 0);
 
-    // Step to the next forecast slot (0 to slotCount - 1)
-    m_selectedSlot = (m_selectedSlot + 1) % m_data.slotCount;
+    m_selectedSlot = static_cast<uint8_t>((m_selectedSlot + 1) % m_data.slotCount);
+    const ForecastSlot& selectedSlot = m_data.slots[m_selectedSlot];
 
     Serial.print("[Button] Click! Switched to Slot ");
     Serial.print(m_selectedSlot);
     Serial.print(" (");
-    Serial.print(m_data.slots[m_selectedSlot].label);
+    Serial.print(selectedSlot.label);
     Serial.println(")");
 
     if (m_selectedSlot == 0) {
-        // Cycled back to Present (Now)
         Serial.println("[Button] Cycled back to Present (Now)");
         m_state = STATE_DISP_ICON;
         m_stateTimerMs = currentMillis;
-        m_lcd.showForecastSlot(m_data.slots[0]);
-        m_display.renderIcon(m_data.slots[0].icon);
+        m_lcd.showForecastSlot(selectedSlot);
+        m_display.renderIcon(selectedSlot.icon);
     } else {
-        // Inspecting future forecast slot (+1h, +3h, +5h, +12h, +1d, +2d, +3d, +4d)
         m_state = STATE_INSPECT;
         m_inspectTimerMs = currentMillis;
-        m_lcd.showForecastSlot(m_data.slots[m_selectedSlot]);
-        m_display.renderIcon(m_data.slots[m_selectedSlot].icon);
+        m_lcd.showForecastSlot(selectedSlot);
+        m_display.renderIcon(selectedSlot.icon);
     }
 }
 
@@ -197,18 +196,21 @@ void AppFSM::handleDispAlert(uint32_t currentMillis) {
 }
 
 void AppFSM::handleInspect(uint32_t currentMillis) {
-    // Return back to Present (Now) after inactivity timeout
     if (currentMillis - m_inspectTimerMs >= USER_INSPECT_TIMEOUT_MS) {
         Serial.println("[FSM] Inspect timeout -> returning to Present (Now)");
         m_selectedSlot = 0;
         m_state = STATE_DISP_ICON;
         m_stateTimerMs = currentMillis;
-        m_lcd.showForecastSlot(m_data.slots[0]);
-        m_display.renderIcon(m_data.slots[0].icon);
+        if (m_data.slotCount > 0) {
+            const ForecastSlot& nowSlot = m_data.slots[0];
+            m_lcd.showForecastSlot(nowSlot);
+            m_display.renderIcon(nowSlot.icon);
+        } else {
+            m_lcd.showWeather(m_data);
+        }
         return;
     }
 
-    // Background poll update when due
     if (currentMillis - m_lastPollMs >= POLL_INTERVAL_MS) {
         m_selectedSlot = 0;
         m_state = STATE_FETCH;
@@ -231,31 +233,16 @@ void AppFSM::handleError(uint32_t currentMillis) {
 }
 
 void AppFSM::update(uint32_t currentMillis) {
-    // Check hardware button click with debounce
     checkButton(currentMillis);
 
     switch (m_state) {
-        case STATE_BOOT:
-            handleBoot(currentMillis);
-            break;
-        case STATE_FETCH:
-            handleFetch(currentMillis);
-            break;
-        case STATE_DISP_ICON:
-            handleDispIcon(currentMillis);
-            break;
-        case STATE_DISP_TEMP:
-            handleDispTemp(currentMillis);
-            break;
-        case STATE_DISP_ALERT:
-            handleDispAlert(currentMillis);
-            break;
-        case STATE_INSPECT:
-            handleInspect(currentMillis);
-            break;
-        case STATE_ERROR:
-            handleError(currentMillis);
-            break;
+        case STATE_BOOT:       handleBoot(currentMillis);      break;
+        case STATE_FETCH:      handleFetch(currentMillis);     break;
+        case STATE_DISP_ICON:  handleDispIcon(currentMillis);  break;
+        case STATE_DISP_TEMP:  handleDispTemp(currentMillis);  break;
+        case STATE_DISP_ALERT: handleDispAlert(currentMillis); break;
+        case STATE_INSPECT:    handleInspect(currentMillis);   break;
+        case STATE_ERROR:      handleError(currentMillis);     break;
         default:
             m_state = STATE_BOOT;
             m_stateTimerMs = currentMillis;

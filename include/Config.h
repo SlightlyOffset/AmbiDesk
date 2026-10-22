@@ -74,6 +74,6 @@ constexpr uint32_t WIFI_TIMEOUT_MS =
     15000UL; // Max 15s to establish Wi-Fi connection
 constexpr uint32_t HTTP_TIMEOUT_MS = 8000UL; // Max 8s socket timeout
 constexpr uint16_t MAX_RESPONSE_BYTES =
-    768; // Hard boundary for HTTP body stream
+    1024; // Hard boundary for HTTP body stream (accommodates 9 timeline slots safely)
 constexpr uint8_t MAX_WIFI_RETRIES =
     3; // Max Wi-Fi reconnect attempts per cycle

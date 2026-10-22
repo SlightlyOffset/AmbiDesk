@@ -33,15 +33,83 @@ function mapWmoToCategory(wmoCode) {
   return 1; // Default fallback to Cloudy
 }
 
+function formatSlotLabel(def, rawTime, curClock) {
+  if (def.offset === 0) {
+    return `Now ${curClock}`.substring(0, 10);
+  }
+  if (!rawTime) {
+    return def.prefix.substring(0, 10);
+  }
+  const parts = rawTime.split("T");
+  const datePart = parts[0] || "";
+  const timePart = parts[1] || "";
+  if (!def.isDaily) {
+    return `${def.prefix} ${timePart || "12:00"}`.substring(0, 10);
+  }
+  const dateSplit = datePart.split("-");
+  const month = dateSplit[1] || "01";
+  const day = dateSplit[2] || "01";
+  return `${def.prefix} ${day}/${month}`.substring(0, 10);
+}
+
+const OFFSET_DEFS = [
+  { prefix: "Now",  offset: 0,  isDaily: false },
+  { prefix: "+1h",  offset: 1,  isDaily: false },
+  { prefix: "+3h",  offset: 3,  isDaily: false },
+  { prefix: "+5h",  offset: 5,  isDaily: false },
+  { prefix: "+12h", offset: 12, isDaily: false },
+  { prefix: "+1d",  offset: 24, isDaily: true },
+  { prefix: "+2d",  offset: 48, isDaily: true },
+  { prefix: "+3d",  offset: 72, isDaily: true },
+  { prefix: "+4d",  offset: 96, isDaily: true }
+];
+
+function buildForecastSlots(data, currentTemp, currentWmo, curTime, curClock) {
+  const hourlyTimes = Array.isArray(data.hourly?.time) ? data.hourly.time : [];
+  const hourlyTemps = Array.isArray(data.hourly?.temperature_2m) ? data.hourly.temperature_2m : [];
+  const hourlyCodes = Array.isArray(data.hourly?.weather_code) ? data.hourly.weather_code : [];
+  const hourlyPops = Array.isArray(data.hourly?.precipitation_probability) ? data.hourly.precipitation_probability : [];
+
+  if (hourlyTimes.length === 0) {
+    return [{
+      lbl: `Now ${curClock}`.substring(0, 10),
+      t: currentTemp,
+      ico: mapWmoToCategory(currentWmo),
+      pop: 0
+    }];
+  }
+
+  const currentHour = curTime ? curTime.substring(0, 13) + ":00" : "";
+  let curIdx = hourlyTimes.indexOf(currentHour);
+  if (curIdx < 0) {
+    curIdx = 0;
+  }
+
+  return OFFSET_DEFS.map(def => {
+    const targetIdx = curIdx + def.offset;
+    const idx = Math.min(Math.max(targetIdx, 0), hourlyTimes.length - 1);
+    const rawTime = hourlyTimes[idx] || curTime;
+    const temp = (idx >= 0 && idx < hourlyTemps.length) ? Math.round(hourlyTemps[idx]) : currentTemp;
+    const wmoCode = (idx >= 0 && idx < hourlyCodes.length) ? hourlyCodes[idx] : currentWmo;
+    const pop = (idx >= 0 && idx < hourlyPops.length) ? Math.round(hourlyPops[idx]) : 0;
+
+    return {
+      lbl: formatSlotLabel(def, rawTime, curClock),
+      t: temp,
+      ico: mapWmoToCategory(wmoCode),
+      pop: Math.min(Math.max(pop, 0), 100)
+    };
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
-    // Enable CORS for testing from browser / local tools
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "public, max-age=300" // Cache 5 minutes
+      "Cache-Control": "public, max-age=300"
     };
 
     if (request.method === "OPTIONS") {
@@ -53,12 +121,10 @@ export default {
       const lat = url.searchParams.get("lat") || "13.72";
       const lon = url.searchParams.get("lon") || "100.77";
 
-      const upstreamUrl = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current=temperature_2m,weather_code&hourly=weather_code,temperature_2m,precipitation_probability&forecast_days=5&timezone=Asia%2FBangkok`;
+      const upstreamUrl = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current=temperature_2m,weather_code&hourly=weather_code,temperature_2m,precipitation_probability&forecast_days=5&timezone=auto`;
 
       const response = await fetch(upstreamUrl, {
-        headers: {
-          "User-Agent": "AmbiDesk-Aggregator/1.0"
-        }
+        headers: { "User-Agent": "AmbiDesk-Aggregator/1.0" }
       });
 
       if (!response.ok) {
@@ -69,88 +135,22 @@ export default {
       }
 
       const data = await response.json();
-
       const currentTemp = Math.round(data.current?.temperature_2m ?? 25);
       const currentWmo = data.current?.weather_code ?? 0;
       const curIcon = mapWmoToCategory(currentWmo);
       const curTime = data.current?.time || "";
+      const curClock = curTime.includes("T") ? curTime.split("T")[1] : "12:00";
 
-      const hourlyTimes = data.hourly?.time || [];
-      const hourlyTemps = data.hourly?.temperature_2m || [];
-      const hourlyCodes = data.hourly?.weather_code || [];
-      const hourlyPops = data.hourly?.precipitation_probability || [];
-
-      // Open-Meteo current.time has minutes (e.g. 2026-10-22T11:15) while hourly is on the hour (2026-10-22T11:00)
-      const currentHour = curTime ? curTime.substring(0, 13) + ":00" : "";
-      let curIdx = hourlyTimes.indexOf(currentHour);
-      if (curIdx === -1) {
-        curIdx = 0;
-      }
-
-      // Definition of 9 time offsets:
-      // 0: Now
-      // 1: +1 hour
-      // 2: +3 hours
-      // 3: +5 hours
-      // 4: +12 hours
-      // 5: +1 day (24h)
-      // 6: +2 days (48h)
-      // 7: +3 days (72h)
-      // 8: +4 days (96h)
-      const offsetDefs = [
-        { prefix: "Now",  offset: 0,  isDaily: false },
-        { prefix: "+1h",  offset: 1,  isDaily: false },
-        { prefix: "+3h",  offset: 3,  isDaily: false },
-        { prefix: "+5h",  offset: 5,  isDaily: false },
-        { prefix: "+12h", offset: 12, isDaily: false },
-        { prefix: "+1d",  offset: 24, isDaily: true },
-        { prefix: "+2d",  offset: 48, isDaily: true },
-        { prefix: "+3d",  offset: 72, isDaily: true },
-        { prefix: "+4d",  offset: 96, isDaily: true }
-      ];
-
-      const curTimeParts = curTime.split("T");
-      const curClock = curTimeParts[1] || "12:00";
-
-      const slots = offsetDefs.map(def => {
-        const idx = Math.min(curIdx + def.offset, hourlyTimes.length - 1);
-        const rawTime = hourlyTimes[idx] || curTime;
-        const temp = (idx >= 0 && idx < hourlyTemps.length) ? Math.round(hourlyTemps[idx]) : currentTemp;
-        const wmoCode = (idx >= 0 && idx < hourlyCodes.length) ? hourlyCodes[idx] : currentWmo;
-        const pop = (idx >= 0 && idx < hourlyPops.length) ? Math.round(hourlyPops[idx]) : 0;
-
-        let lbl = "";
-        const parts = (rawTime || "").split("T");
-        const datePart = parts[0] || "";
-        const timePart = parts[1] || "";
-        const dateSplit = datePart.split("-");
-        const month = dateSplit[1] || "01";
-        const day = dateSplit[2] || "01";
-
-        if (def.offset === 0) {
-          lbl = `Now ${curClock}`;
-        } else if (!def.isDaily) {
-          lbl = `${def.prefix} ${timePart || "12:00"}`;
-        } else {
-          lbl = `${def.prefix} ${day}/${month}`;
-        }
-
-        return {
-          lbl: lbl.substring(0, 10),
-          t: temp,
-          ico: mapWmoToCategory(wmoCode),
-          pop: pop
-        };
-      });
-
+      const slots = buildForecastSlots(data, currentTemp, currentWmo, curTime, curClock);
       const nextIcon = slots.length > 1 ? slots[1].ico : curIcon;
-      const curPop = slots.length > 0 ? slots[0].pop : 0;
+      // Sync legacy pop with +1h forecast (slots[1]) to match next-hour rain warning display
+      const nextPop = slots.length > 1 ? slots[1].pop : (slots[0]?.pop ?? 0);
 
       const payload = {
         cur_t: currentTemp,
         cur_icon: curIcon,
         nxt_icon: nextIcon,
-        pop: curPop,
+        pop: nextPop,
         slots: slots
       };
 

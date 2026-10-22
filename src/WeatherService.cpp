@@ -1,12 +1,20 @@
 #include "WeatherService.h"
-#include <ArduinoJson.h>
+#include <Arduino.h>
+#include <assert.h>
+#include <string.h>
 
 WeatherService::WeatherService() {
     memset(m_payloadBuffer, 0, sizeof(m_payloadBuffer));
 }
 
 bool WeatherService::ensureWifiConnected(const char* ssid, const char* pass, uint32_t timeoutMs) {
-    if (WiFi.status() == WL_CONNECTED) {
+    if (ssid == nullptr || pass == nullptr || timeoutMs == 0) {
+        return false;
+    }
+    assert(ssid != nullptr);
+    assert(timeoutMs > 0);
+
+    if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
         return true;
     }
 
@@ -14,17 +22,22 @@ bool WeatherService::ensureWifiConnected(const char* ssid, const char* pass, uin
     while (retries < MAX_WIFI_RETRIES) {
         Serial.print("Connecting to Wi-Fi: ");
         Serial.println(ssid);
-
         WiFi.begin(ssid, pass);
-        uint32_t startMs = millis();
 
-        while (WiFi.status() != WL_CONNECTED && (millis() - startMs < timeoutMs)) {
-            delay(500);
+        uint32_t startMs = millis();
+        uint16_t iteration = 0;
+        constexpr uint16_t MAX_WIFI_ITERATIONS = 150; // 150 * 100ms = 15s max
+
+        while ((WiFi.status() != WL_CONNECTED || WiFi.localIP() == IPAddress(0, 0, 0, 0)) && 
+               (millis() - startMs < timeoutMs) && 
+               (iteration < MAX_WIFI_ITERATIONS)) {
+            delay(100);
+            iteration++;
             Serial.print(".");
         }
         Serial.println();
 
-        if (WiFi.status() == WL_CONNECTED) {
+        if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
             Serial.print("Wi-Fi connected! IP address: ");
             Serial.println(WiFi.localIP());
             return true;
@@ -35,92 +48,185 @@ bool WeatherService::ensureWifiConnected(const char* ssid, const char* pass, uin
         Serial.print(retries);
         Serial.print(" of ");
         Serial.println(MAX_WIFI_RETRIES);
-        delay(1000);
+        delay(500);
     }
 
     return false;
 }
 
 int32_t WeatherService::getRssi() const {
+    if (!isConnected()) {
+        return -100;
+    }
     return WiFi.RSSI();
 }
 
 bool WeatherService::isConnected() const {
-    return (WiFi.status() == WL_CONNECTED);
+    return (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0));
 }
 
-bool WeatherService::readHttpResponse(WiFiClient& client, uint32_t timeoutMs) {
-    uint32_t startMs = millis();
-
-    while (!client.available()) {
-        if (millis() - startMs >= timeoutMs) {
-            Serial.println("HTTP response timeout.");
-            return false;
-        }
-        delay(10);
-    }
-
-    // Skip HTTP headers: scan for double CRLF or '{'
-    bool foundBody = false;
+bool WeatherService::skipToBody(WiFiClient& client, uint32_t startMs, uint32_t timeoutMs) {
     uint16_t skipBytes = 0;
     constexpr uint16_t MAX_HEADER_SCAN = 1024;
 
-    while (client.available() && skipBytes < MAX_HEADER_SCAN) {
-        char c = (char)client.read();
-        skipBytes++;
-        if (c == '{') {
-            m_payloadBuffer[0] = '{';
-            foundBody = true;
-            break;
+    while ((client.connected() || client.available()) && 
+           (skipBytes < MAX_HEADER_SCAN) && 
+           (millis() - startMs < timeoutMs)) {
+        if (client.available()) {
+            char c = static_cast<char>(client.read());
+            skipBytes++;
+            if (c == '{') {
+                m_payloadBuffer[0] = '{';
+                return true;
+            }
+        } else {
+            delay(5);
         }
     }
+    return false;
+}
 
-    if (!foundBody) {
+bool WeatherService::readHttpResponse(WiFiClient& client, uint32_t timeoutMs) {
+    assert(timeoutMs > 0);
+    uint32_t startMs = millis();
+    uint16_t waitCycles = 0;
+    constexpr uint16_t MAX_WAIT_CYCLES = 800; // 800 * 10ms = 8000ms max
+
+    while (client.connected() && !client.available() && 
+           (millis() - startMs < timeoutMs) && 
+           (waitCycles < MAX_WAIT_CYCLES)) {
+        delay(10);
+        waitCycles++;
+    }
+    if (!client.available() || !skipToBody(client, startMs, timeoutMs)) {
         return false;
     }
 
-    // Read remaining body into static buffer
     uint16_t bufIndex = 1;
-    uint16_t maxBuf = sizeof(m_payloadBuffer) - 1;
-    while (client.available() && (bufIndex < maxBuf)) {
-        m_payloadBuffer[bufIndex++] = (char)client.read();
+    const uint16_t maxBuf = static_cast<uint16_t>(sizeof(m_payloadBuffer) - 1);
+    uint16_t idleCycles = 0;
+    constexpr uint16_t MAX_IDLE_CYCLES = 100; // 100 * 10ms = 1000ms max idle
+
+    while ((client.connected() || client.available()) && 
+           (bufIndex < maxBuf) && 
+           (millis() - startMs < timeoutMs) && 
+           (idleCycles < MAX_IDLE_CYCLES)) {
+        if (client.available()) {
+            m_payloadBuffer[bufIndex++] = static_cast<char>(client.read());
+            idleCycles = 0;
+        } else {
+            delay(10);
+            idleCycles++;
+        }
     }
     m_payloadBuffer[bufIndex] = '\0';
-
+    assert(bufIndex < sizeof(m_payloadBuffer));
     return (bufIndex > 1);
 }
 
-bool WeatherService::executeHttpRequest(const char* host, uint16_t port, const char* path, bool useSsl) {
-    bool success = false;
+bool WeatherService::sendGetRequest(WiFiClient& client, const char* host, const char* path) {
+    if (host == nullptr || path == nullptr) {
+        return false;
+    }
+    assert(host != nullptr);
+    assert(path != nullptr);
 
+    client.print("GET "); client.print(path); client.println(" HTTP/1.1");
+    client.print("Host: "); client.println(host);
+    client.println("User-Agent: AmbiDesk-UNO-R4");
+    client.println("Connection: close");
+    client.println();
+
+    return readHttpResponse(client, HTTP_TIMEOUT_MS);
+}
+
+bool WeatherService::executeHttpRequest(const char* host, uint16_t port, const char* path, bool useSsl) {
+    if (host == nullptr || path == nullptr) {
+        return false;
+    }
+    assert(host != nullptr);
+    assert(path != nullptr);
+
+    bool success = false;
     if (useSsl) {
         WiFiSSLClient sslClient;
         if (!sslClient.connect(host, port)) {
+            sslClient.stop();
             Serial.println("SSL connection failed.");
             return false;
         }
-        sslClient.print("GET "); sslClient.print(path); sslClient.println(" HTTP/1.1");
-        sslClient.print("Host: "); sslClient.println(host);
-        sslClient.println("User-Agent: AmbiDesk-UNO-R4");
-        sslClient.println("Connection: close");
-        sslClient.println();
-        success = readHttpResponse(sslClient, HTTP_TIMEOUT_MS);
+        success = sendGetRequest(sslClient, host, path);
         sslClient.stop();
     } else {
         WiFiClient client;
         if (!client.connect(host, port)) {
+            client.stop();
             Serial.println("TCP connection failed.");
             return false;
         }
-        client.print("GET "); client.print(path); client.println(" HTTP/1.1");
-        client.print("Host: "); client.println(host);
-        client.println("User-Agent: AmbiDesk-UNO-R4");
-        client.println("Connection: close");
-        client.println();
-        success = readHttpResponse(client, HTTP_TIMEOUT_MS);
+        success = sendGetRequest(client, host, path);
         client.stop();
     }
     return success;
+}
+
+bool WeatherService::parseSlots(JsonArrayConst slots, WeatherData& outData) {
+    uint8_t count = 0;
+    for (JsonObjectConst s : slots) {
+        if (count >= FORECAST_SLOTS_COUNT) break;
+        const char* lbl = s["lbl"] | "";
+        strncpy(outData.slots[count].label, lbl, sizeof(outData.slots[count].label) - 1);
+        outData.slots[count].label[sizeof(outData.slots[count].label) - 1] = '\0';
+
+        int32_t t = s["t"] | 0;
+        if (t < -40) t = -40;
+        if (t > 60)  t = 60;
+        outData.slots[count].temp = static_cast<int8_t>(t);
+
+        uint32_t ico = s["ico"] | static_cast<uint32_t>(ICON_CLOUDY);
+        if (ico > static_cast<uint32_t>(ICON_ERROR)) ico = ICON_CLOUDY;
+        outData.slots[count].icon = static_cast<uint8_t>(ico);
+
+        int32_t popVal = s["pop"] | 0;
+        if (popVal < 0)   popVal = 0;
+        if (popVal > 100) popVal = 100;
+        outData.slots[count].pop = static_cast<uint8_t>(popVal);
+
+        count++;
+    }
+    outData.slotCount = count;
+    outData.syncLegacyFields();
+    outData.isValid = (count > 0);
+    return outData.isValid;
+}
+
+bool WeatherService::parseFallback(const JsonDocument& doc, WeatherData& outData) {
+    int32_t t = doc["cur_t"] | 0;
+    if (t < -40) t = -40;
+    if (t > 60)  t = 60;
+    outData.currentTemp = static_cast<int8_t>(t);
+
+    uint32_t ico = doc["cur_icon"] | static_cast<uint32_t>(ICON_CLOUDY);
+    if (ico > static_cast<uint32_t>(ICON_ERROR)) ico = ICON_CLOUDY;
+    outData.currentIcon = static_cast<uint8_t>(ico);
+
+    uint32_t nxtIco = doc["nxt_icon"] | static_cast<uint32_t>(outData.currentIcon);
+    if (nxtIco > static_cast<uint32_t>(ICON_ERROR)) nxtIco = outData.currentIcon;
+    outData.nextIcon = static_cast<uint8_t>(nxtIco);
+
+    int32_t popVal = doc["pop"] | 0;
+    if (popVal < 0)   popVal = 0;
+    if (popVal > 100) popVal = 100;
+    outData.pop = static_cast<uint8_t>(popVal);
+
+    strncpy(outData.slots[0].label, "Now", sizeof(outData.slots[0].label) - 1);
+    outData.slots[0].label[sizeof(outData.slots[0].label) - 1] = '\0';
+    outData.slots[0].temp = outData.currentTemp;
+    outData.slots[0].icon = outData.currentIcon;
+    outData.slots[0].pop  = outData.pop;
+    outData.slotCount   = 1;
+    outData.isValid     = true;
+    return true;
 }
 
 bool WeatherService::parsePayload(WeatherData& outData) {
@@ -128,7 +234,8 @@ bool WeatherService::parsePayload(WeatherData& outData) {
         return false;
     }
 
-    JsonDocument doc;
+    m_allocator.reset();
+    JsonDocument doc(&m_allocator);
     DeserializationError error = deserializeJson(doc, m_payloadBuffer);
     if (error) {
         Serial.print("JSON parse error: ");
@@ -137,49 +244,23 @@ bool WeatherService::parsePayload(WeatherData& outData) {
     }
 
     outData.reset();
-
-    // Check if slots array format is present
     JsonArrayConst slots = doc["slots"].as<JsonArrayConst>();
     if (!slots.isNull() && slots.size() > 0) {
-        uint8_t count = 0;
-        for (JsonObjectConst s : slots) {
-            if (count >= FORECAST_SLOTS_COUNT) break;
-            const char* lbl = s["lbl"] | "";
-            strncpy(outData.slots[count].label, lbl, sizeof(outData.slots[count].label) - 1);
-            outData.slots[count].label[sizeof(outData.slots[count].label) - 1] = '\0';
-            outData.slots[count].temp = s["t"] | 0;
-            outData.slots[count].icon = s["ico"] | (uint8_t)ICON_CLOUDY;
-            outData.slots[count].pop  = s["pop"] | 0;
-            count++;
-        }
-        outData.slotCount = count;
-        outData.syncLegacyFields();
-        outData.isValid = (count > 0);
-    } else if (doc["cur_t"].is<int8_t>() && doc["cur_icon"].is<uint8_t>()) {
-        // Fallback for simple current weather schema
-        outData.currentTemp = doc["cur_t"].as<int8_t>();
-        outData.currentIcon = doc["cur_icon"].as<uint8_t>();
-        outData.nextIcon    = doc["nxt_icon"] | outData.currentIcon;
-        outData.pop         = doc["pop"] | 0;
-
-        strncpy(outData.slots[0].label, "Now", sizeof(outData.slots[0].label) - 1);
-        outData.slots[0].temp = outData.currentTemp;
-        outData.slots[0].icon = outData.currentIcon;
-        outData.slots[0].pop  = outData.pop;
-        outData.slotCount   = 1;
-        outData.isValid     = true;
-    } else {
-        Serial.println("Invalid payload schema.");
-        return false;
+        return parseSlots(slots, outData);
+    } else if (doc["cur_t"].is<int>() && doc["cur_icon"].is<int>()) {
+        return parseFallback(doc, outData);
     }
 
-    return outData.isValid;
+    Serial.println("Invalid payload schema.");
+    return false;
 }
 
 bool WeatherService::fetchWeather(const char* host, uint16_t port, const char* path, bool useSsl, WeatherData& outData) {
     if (host == nullptr || path == nullptr) {
         return false;
     }
+    assert(host != nullptr);
+    assert(path != nullptr);
 
     memset(m_payloadBuffer, 0, sizeof(m_payloadBuffer));
     bool httpOk = executeHttpRequest(host, port, path, useSsl);
