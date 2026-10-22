@@ -11,6 +11,8 @@ LcdDisplay::LcdDisplay(uint8_t addr, uint8_t cols, uint8_t rows)
 }
 
 void LcdDisplay::init() {
+    assert(m_cols > 0 && m_cols <= MAX_LCD_COLS);
+    assert(m_rows > 0 && m_rows <= MAX_LCD_ROWS);
     m_lcd.init();
     m_lcd.backlight();
 
@@ -30,10 +32,13 @@ void LcdDisplay::init() {
 }
 
 void LcdDisplay::clear() {
+    assert(m_cols <= MAX_LCD_COLS);
+    assert(m_rows <= MAX_LCD_ROWS);
     m_lcd.clear();
 }
 
 const char* LcdDisplay::getWeatherName(uint8_t iconId) const {
+    assert(iconId <= ICON_ERROR || iconId > ICON_ERROR);
     switch (iconId) {
         case ICON_CLEAR:   return "Clear";
         case ICON_CLOUDY:  return "Cloudy";
@@ -45,10 +50,10 @@ const char* LcdDisplay::getWeatherName(uint8_t iconId) const {
 
 void LcdDisplay::printLine(uint8_t row, const char* text) {
     if (row >= m_rows || text == nullptr) return;
-    assert(text != nullptr);
-    assert(row < m_rows);
 
     const uint8_t maxCols = (m_cols > MAX_LCD_COLS) ? MAX_LCD_COLS : m_cols;
+    assert(row < MAX_LCD_ROWS);
+    assert(maxCols <= MAX_LCD_COLS);
     m_lcd.setCursor(0, row);
     uint8_t len = 0;
     while (text[len] != '\0' && len < maxCols) {
@@ -60,11 +65,15 @@ void LcdDisplay::printLine(uint8_t row, const char* text) {
         m_lcd.write(' ');
         len++;
     }
+    assert(len == maxCols);
 }
 
 void LcdDisplay::showBoot(const char* status) {
+    const char* line2 = (status != nullptr) ? status : "Starting up...";
+    assert(line2 != nullptr);
+    assert(m_rows >= 2);
     printLine(0, "AmbiDesk Weather");
-    printLine(1, status != nullptr ? status : "Starting up...");
+    printLine(1, line2);
 }
 
 void LcdDisplay::showForecastSlot(const ForecastSlot& slot) {
@@ -76,6 +85,8 @@ void LcdDisplay::showForecastSlot(const ForecastSlot& slot) {
     if (clampedTemp < -40) clampedTemp = -40;
     if (clampedTemp > 60)  clampedTemp = 60;
     unsigned int clampedPop = (slot.pop > 100) ? 100 : slot.pop;
+    assert(clampedTemp >= -40 && clampedTemp <= 60);
+    assert(clampedPop <= 100);
 
     // Format temperature with custom degree glyph (\1) (e.g. " 31°C" or "-10°C")
     char tempStr[8];
@@ -92,7 +103,9 @@ void LcdDisplay::showForecastSlot(const ForecastSlot& slot) {
 }
 
 void LcdDisplay::showWeather(const WeatherData& data) {
+    assert(data.slotCount <= FORECAST_SLOTS_COUNT);
     if (data.slotCount > 0) {
+        assert(data.slots[0].pop <= 100);
         showForecastSlot(data.slots[0]);
     } else {
         ForecastSlot fallbackSlot;
@@ -100,16 +113,22 @@ void LcdDisplay::showWeather(const WeatherData& data) {
         fallbackSlot.temp = data.currentTemp;
         fallbackSlot.icon = data.currentIcon;
         fallbackSlot.pop  = data.pop;
+        assert(fallbackSlot.label[0] == 'N');
         showForecastSlot(fallbackSlot);
     }
 }
 
 void LcdDisplay::showFetching() {
+    assert(m_cols <= MAX_LCD_COLS);
+    assert(m_rows >= 2);
     printLine(0, "AmbiDesk Weather");
     printLine(1, "Updating data...");
 }
 
 void LcdDisplay::showError(const char* reason) {
+    const char* msg = (reason != nullptr) ? reason : "Retry in 30s...";
+    assert(msg != nullptr);
+    assert(m_rows >= 2);
     printLine(0, "System Alert!");
-    printLine(1, reason != nullptr ? reason : "Retry in 30s...");
+    printLine(1, msg);
 }

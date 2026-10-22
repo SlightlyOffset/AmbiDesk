@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <assert.h>
 #include <WiFiS3.h>
 #include <ArduinoJson.h>
 #include "Config.h"
@@ -12,6 +13,10 @@ public:
     static constexpr size_t POOL_SIZE = 4096;
 
     void* allocate(size_t size) override {
+        if (size == 0) {
+            return nullptr;
+        }
+        assert(size > 0);
         size_t aligned = (size + 3) & ~static_cast<size_t>(3);
         if (m_used + aligned > POOL_SIZE) {
             return nullptr;
@@ -21,28 +26,43 @@ public:
         m_lastOffset = m_used;
         m_lastSize = aligned;
         m_used += aligned;
+        assert(m_used <= POOL_SIZE);
         return ptr;
     }
 
     void deallocate(void* /*ptr*/) override {
         // Pool allocator resets en masse, no per-slot free
+        assert(m_used <= POOL_SIZE);
     }
 
     void* reallocate(void* ptr, size_t new_size) override {
+        if (new_size == 0) {
+            return nullptr;
+        }
+        assert(new_size > 0);
         size_t aligned = (new_size + 3) & ~static_cast<size_t>(3);
         if (ptr != nullptr && ptr == m_lastPtr) {
             if (m_lastOffset + aligned <= POOL_SIZE) {
                 m_used = m_lastOffset + aligned;
                 m_lastSize = aligned;
+                assert(m_used <= POOL_SIZE);
                 return ptr;
             }
             return nullptr;
         }
         void* newPtr = allocate(aligned);
         if (newPtr != nullptr && ptr != nullptr) {
-            size_t copyLen = (m_lastSize < aligned) ? m_lastSize : aligned;
-            memcpy(newPtr, ptr, copyLen);
+            const uint8_t* srcBytes = static_cast<const uint8_t*>(ptr);
+            const uint8_t* dstBytes = static_cast<const uint8_t*>(newPtr);
+            size_t maxOldLen = (dstBytes > srcBytes)
+                ? static_cast<size_t>(dstBytes - srcBytes)
+                : 0;
+            size_t copyLen = (maxOldLen < aligned) ? maxOldLen : aligned;
+            if (copyLen > 0) {
+                memcpy(newPtr, ptr, copyLen);
+            }
         }
+        assert(m_used <= POOL_SIZE);
         return newPtr;
     }
 
@@ -51,6 +71,8 @@ public:
         m_lastPtr = nullptr;
         m_lastOffset = 0;
         m_lastSize = 0;
+        assert(m_used == 0);
+        assert(m_lastPtr == nullptr);
     }
 
 private:

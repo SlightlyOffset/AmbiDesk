@@ -5,13 +5,15 @@
 
 WeatherService::WeatherService() {
     memset(m_payloadBuffer, 0, sizeof(m_payloadBuffer));
+    assert(m_payloadBuffer[0] == '\0');
+    assert(sizeof(m_payloadBuffer) == MAX_RESPONSE_BYTES);
 }
 
 bool WeatherService::ensureWifiConnected(const char* ssid, const char* pass, uint32_t timeoutMs) {
     if (ssid == nullptr || pass == nullptr || timeoutMs == 0) {
         return false;
     }
-    assert(ssid != nullptr);
+    assert(ssid != nullptr && pass != nullptr);
     assert(timeoutMs > 0);
 
     if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
@@ -35,6 +37,7 @@ bool WeatherService::ensureWifiConnected(const char* ssid, const char* pass, uin
             iteration++;
             Serial.print(".");
         }
+        assert(iteration <= MAX_WIFI_ITERATIONS);
         Serial.println();
 
         if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
@@ -50,6 +53,7 @@ bool WeatherService::ensureWifiConnected(const char* ssid, const char* pass, uin
         Serial.println(MAX_WIFI_RETRIES);
         delay(500);
     }
+    assert(retries == MAX_WIFI_RETRIES);
 
     return false;
 }
@@ -58,31 +62,43 @@ int32_t WeatherService::getRssi() const {
     if (!isConnected()) {
         return -100;
     }
-    return WiFi.RSSI();
+    int32_t rssi = WiFi.RSSI();
+    assert(rssi <= 0);
+    return rssi;
 }
 
 bool WeatherService::isConnected() const {
-    return (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0));
+    bool connected = (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0));
+    assert(!connected || WiFi.status() == WL_CONNECTED);
+    return connected;
 }
 
 bool WeatherService::skipToBody(WiFiClient& client, uint32_t startMs, uint32_t timeoutMs) {
+    assert(timeoutMs > 0);
     uint16_t skipBytes = 0;
+    uint16_t waitCycles = 0;
     constexpr uint16_t MAX_HEADER_SCAN = 1024;
+    constexpr uint16_t MAX_HEADER_WAIT_CYCLES = 1600; // 1600 * 5ms = 8000ms max
 
     while ((client.connected() || client.available()) && 
            (skipBytes < MAX_HEADER_SCAN) && 
+           (waitCycles < MAX_HEADER_WAIT_CYCLES) && 
            (millis() - startMs < timeoutMs)) {
         if (client.available()) {
             char c = static_cast<char>(client.read());
             skipBytes++;
             if (c == '{') {
                 m_payloadBuffer[0] = '{';
+                assert(skipBytes <= MAX_HEADER_SCAN);
                 return true;
             }
         } else {
             delay(5);
+            waitCycles++;
         }
     }
+    assert(skipBytes <= MAX_HEADER_SCAN);
+    assert(waitCycles <= MAX_HEADER_WAIT_CYCLES);
     return false;
 }
 
@@ -171,6 +187,7 @@ bool WeatherService::executeHttpRequest(const char* host, uint16_t port, const c
 }
 
 bool WeatherService::parseSlots(JsonArrayConst slots, WeatherData& outData) {
+    assert(!slots.isNull());
     uint8_t count = 0;
     for (JsonObjectConst s : slots) {
         if (count >= FORECAST_SLOTS_COUNT) break;
@@ -194,6 +211,7 @@ bool WeatherService::parseSlots(JsonArrayConst slots, WeatherData& outData) {
 
         count++;
     }
+    assert(count <= FORECAST_SLOTS_COUNT);
     outData.slotCount = count;
     outData.syncLegacyFields();
     outData.isValid = (count > 0);
@@ -201,6 +219,7 @@ bool WeatherService::parseSlots(JsonArrayConst slots, WeatherData& outData) {
 }
 
 bool WeatherService::parseFallback(const JsonDocument& doc, WeatherData& outData) {
+    assert(!doc.isNull());
     int32_t t = doc["cur_t"] | 0;
     if (t < -40) t = -40;
     if (t > 60)  t = 60;
@@ -226,6 +245,7 @@ bool WeatherService::parseFallback(const JsonDocument& doc, WeatherData& outData
     outData.slots[0].pop  = outData.pop;
     outData.slotCount   = 1;
     outData.isValid     = true;
+    assert(outData.slotCount == 1 && outData.pop <= 100);
     return true;
 }
 
@@ -233,6 +253,7 @@ bool WeatherService::parsePayload(WeatherData& outData) {
     if (m_payloadBuffer[0] == '\0') {
         return false;
     }
+    assert(m_payloadBuffer[0] == '{');
 
     m_allocator.reset();
     JsonDocument doc(&m_allocator);
@@ -244,6 +265,7 @@ bool WeatherService::parsePayload(WeatherData& outData) {
     }
 
     outData.reset();
+    assert(!outData.isValid && outData.slotCount == 0);
     JsonArrayConst slots = doc["slots"].as<JsonArrayConst>();
     if (!slots.isNull() && slots.size() > 0) {
         return parseSlots(slots, outData);

@@ -89,9 +89,15 @@ function buildForecastSlots(data, currentTemp, currentWmo, curTime, curClock) {
     const targetIdx = curIdx + def.offset;
     const idx = Math.min(Math.max(targetIdx, 0), hourlyTimes.length - 1);
     const rawTime = hourlyTimes[idx] || curTime;
-    const temp = (idx >= 0 && idx < hourlyTemps.length) ? Math.round(hourlyTemps[idx]) : currentTemp;
-    const wmoCode = (idx >= 0 && idx < hourlyCodes.length) ? hourlyCodes[idx] : currentWmo;
-    const pop = (idx >= 0 && idx < hourlyPops.length) ? Math.round(hourlyPops[idx]) : 0;
+    const temp = (idx >= 0 && idx < hourlyTemps.length && hourlyTemps[idx] != null)
+      ? Math.round(hourlyTemps[idx])
+      : currentTemp;
+    const wmoCode = (idx >= 0 && idx < hourlyCodes.length && hourlyCodes[idx] != null)
+      ? hourlyCodes[idx]
+      : currentWmo;
+    const pop = (idx >= 0 && idx < hourlyPops.length && hourlyPops[idx] != null)
+      ? Math.round(hourlyPops[idx])
+      : 0;
 
     return {
       lbl: formatSlotLabel(def, rawTime, curClock),

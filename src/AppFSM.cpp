@@ -16,6 +16,8 @@ AppFSM::AppFSM(DisplayEngine& display, LcdDisplay& lcd, WeatherService& weather)
       m_debouncedButtonState(HIGH),
       m_lastDebounceMs(0) {
     m_data.reset();
+    assert(m_state == STATE_BOOT);
+    assert(!m_data.isValid);
 }
 
 void AppFSM::init() {
@@ -27,11 +29,13 @@ void AppFSM::init() {
     m_display.init();
     m_display.renderBoot();
     m_lcd.init();
-    m_lcd.showBoot("Connecting WiFi");
+    m_lcd.showBoot("Starting up...");
     m_state = STATE_BOOT;
     m_stateTimerMs = millis();
     m_lastPollMs = 0;
     m_selectedSlot = 0;
+    assert(m_state == STATE_BOOT);
+    assert(m_selectedSlot == 0);
 
     Serial.print("[FSM] Initialized with Button on Pin ");
     Serial.print(BUTTON_PIN);
@@ -39,19 +43,23 @@ void AppFSM::init() {
 }
 
 AppState AppFSM::getState() const {
+    assert(m_state <= STATE_ERROR);
     return m_state;
 }
 
 const WeatherData& AppFSM::getData() const {
+    assert(m_data.slotCount <= FORECAST_SLOTS_COUNT);
     return m_data;
 }
 
 uint8_t AppFSM::getSelectedSlot() const {
+    assert(m_selectedSlot < FORECAST_SLOTS_COUNT);
     return m_selectedSlot;
 }
 
 void AppFSM::checkButton(uint32_t currentMillis) {
     uint8_t reading = static_cast<uint8_t>(digitalRead(BUTTON_PIN));
+    assert(reading == LOW || reading == HIGH);
 
     if (reading != m_lastButtonReading) {
         m_lastDebounceMs = currentMillis;
@@ -61,6 +69,7 @@ void AppFSM::checkButton(uint32_t currentMillis) {
     if ((currentMillis - m_lastDebounceMs) >= BUTTON_DEBOUNCE_MS) {
         if (reading != m_debouncedButtonState) {
             m_debouncedButtonState = reading;
+            assert(m_debouncedButtonState == reading);
             if (m_debouncedButtonState == LOW) {
                 handleButtonPress(currentMillis);
             }
@@ -69,13 +78,14 @@ void AppFSM::checkButton(uint32_t currentMillis) {
 }
 
 void AppFSM::handleButtonPress(uint32_t currentMillis) {
-    if (!m_data.isValid || m_data.slotCount == 0) {
+    if (!m_data.isValid || m_data.slotCount == 0 || m_data.slotCount > FORECAST_SLOTS_COUNT) {
         Serial.println("[Button] Click detected, but weather data is not ready yet.");
         return;
     }
-    assert(m_data.slotCount > 0);
+    assert(m_data.slotCount > 0 && m_data.slotCount <= FORECAST_SLOTS_COUNT);
 
     m_selectedSlot = static_cast<uint8_t>((m_selectedSlot + 1) % m_data.slotCount);
+    assert(m_selectedSlot < m_data.slotCount);
     const ForecastSlot& selectedSlot = m_data.slots[m_selectedSlot];
 
     Serial.print("[Button] Click! Switched to Slot ");
@@ -99,6 +109,7 @@ void AppFSM::handleButtonPress(uint32_t currentMillis) {
 }
 
 void AppFSM::handleBoot(uint32_t currentMillis) {
+    assert(m_state == STATE_BOOT);
     Serial.println("[FSM] STATE_BOOT: Connecting to Wi-Fi...");
     m_lcd.showBoot("Connecting WiFi");
     bool wifiOk = m_weather.ensureWifiConnected(WIFI_SSID, WIFI_PASSWORD, WIFI_TIMEOUT_MS);
@@ -114,9 +125,11 @@ void AppFSM::handleBoot(uint32_t currentMillis) {
         m_state = STATE_ERROR;
         m_stateTimerMs = currentMillis;
     }
+    assert(m_state == STATE_FETCH || m_state == STATE_ERROR);
 }
 
 void AppFSM::handleFetch(uint32_t currentMillis) {
+    assert(m_state == STATE_FETCH);
     Serial.println("[FSM] STATE_FETCH: Requesting weather data...");
     m_lcd.showFetching();
     bool fetchOk = m_weather.fetchWeather(AGGREGATOR_HOST, AGGREGATOR_PORT, AGGREGATOR_PATH, AGGREGATOR_USE_SSL, m_data);
@@ -145,9 +158,11 @@ void AppFSM::handleFetch(uint32_t currentMillis) {
         m_state = STATE_ERROR;
         m_stateTimerMs = currentMillis;
     }
+    assert(m_state == STATE_DISP_ICON || m_state == STATE_ERROR);
 }
 
 void AppFSM::handleDispIcon(uint32_t currentMillis) {
+    assert(m_state == STATE_DISP_ICON);
     if (currentMillis - m_lastPollMs >= POLL_INTERVAL_MS) {
         m_state = STATE_FETCH;
         m_stateTimerMs = currentMillis;
@@ -159,9 +174,11 @@ void AppFSM::handleDispIcon(uint32_t currentMillis) {
         m_stateTimerMs = currentMillis;
         m_display.renderTemperature(m_data.currentTemp);
     }
+    assert(m_state == STATE_DISP_ICON || m_state == STATE_DISP_TEMP);
 }
 
 void AppFSM::handleDispTemp(uint32_t currentMillis) {
+    assert(m_state == STATE_DISP_TEMP);
     if (currentMillis - m_lastPollMs >= POLL_INTERVAL_MS) {
         m_state = STATE_FETCH;
         m_stateTimerMs = currentMillis;
@@ -179,9 +196,11 @@ void AppFSM::handleDispTemp(uint32_t currentMillis) {
             m_display.renderIcon(m_data.currentIcon);
         }
     }
+    assert(m_state <= STATE_DISP_ALERT);
 }
 
 void AppFSM::handleDispAlert(uint32_t currentMillis) {
+    assert(m_state == STATE_DISP_ALERT);
     if (currentMillis - m_lastPollMs >= POLL_INTERVAL_MS) {
         m_state = STATE_FETCH;
         m_stateTimerMs = currentMillis;
@@ -193,9 +212,11 @@ void AppFSM::handleDispAlert(uint32_t currentMillis) {
         m_stateTimerMs = currentMillis;
         m_display.renderIcon(m_data.currentIcon);
     }
+    assert(m_state == STATE_DISP_ALERT || m_state == STATE_DISP_ICON);
 }
 
 void AppFSM::handleInspect(uint32_t currentMillis) {
+    assert(m_state == STATE_INSPECT);
     if (currentMillis - m_inspectTimerMs >= USER_INSPECT_TIMEOUT_MS) {
         Serial.println("[FSM] Inspect timeout -> returning to Present (Now)");
         m_selectedSlot = 0;
@@ -216,9 +237,11 @@ void AppFSM::handleInspect(uint32_t currentMillis) {
         m_state = STATE_FETCH;
         m_stateTimerMs = currentMillis;
     }
+    assert(m_state == STATE_INSPECT || m_state == STATE_FETCH);
 }
 
 void AppFSM::handleError(uint32_t currentMillis) {
+    assert(m_state == STATE_ERROR);
     if (currentMillis - m_stateTimerMs >= ERROR_RETRY_MS) {
         Serial.println("[FSM] Error backoff elapsed. Retrying fetch...");
         if (!m_weather.isConnected()) {
@@ -230,9 +253,11 @@ void AppFSM::handleError(uint32_t currentMillis) {
         }
         m_stateTimerMs = currentMillis;
     }
+    assert(m_state == STATE_ERROR || m_state == STATE_BOOT || m_state == STATE_FETCH);
 }
 
 void AppFSM::update(uint32_t currentMillis) {
+    assert(m_state <= STATE_ERROR);
     checkButton(currentMillis);
 
     switch (m_state) {
@@ -248,4 +273,5 @@ void AppFSM::update(uint32_t currentMillis) {
             m_stateTimerMs = currentMillis;
             break;
     }
+    assert(m_state <= STATE_ERROR);
 }
