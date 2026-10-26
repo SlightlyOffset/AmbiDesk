@@ -107,3 +107,7 @@
 | 4 | 68070083 | นัธทวัฒน์ พละเดช | ระบบหลังบ้านและเฟิร์มแวร์ (Back-end & Firmware) |
 
 ---
+
+# Project Poster
+
+![Project Poster](AmbiDesk - Ambient Workspace Weather & Forecast Companion.png)
