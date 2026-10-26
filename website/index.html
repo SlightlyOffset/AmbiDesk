@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AmbiDesk – Ambient Workspace Weather &amp; Forecast Companion</title>
+<meta name="description" content="AmbiDesk อุปกรณ์ตั้งโต๊ะรายงานสภาพอากาศและพยากรณ์ฝนด้วย Arduino UNO R4 WiFi และ LED Matrix 12x8">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#">AmbiDesk</a>
+  <nav><a href="#abstract">Abstract</a><a href="#features">ความสามารถ</a><a href="#hardware">อุปกรณ์</a><a href="#wiring">การต่อวงจร</a><a href="#start">การติดตั้ง</a><a href="#source">ซอร์สโค้ด</a><a href="#team">สมาชิก</a><a href="https://github.com/SlightlyOffset/AmbiDesk">GitHub</a></nav>
+</header>
+
+<main>
+<section class="hero">
+  <div class="copy">
+    <h1>AmbiDesk</h1>
+    <p class="sub">Ambient Workspace Weather &amp; Forecast Companion</p>
+    <p>อุปกรณ์ตั้งโต๊ะอัจฉริยะที่รายงานสภาพอากาศ อุณหภูมิ และความน่าจะเป็นของฝนแบบ Real-time ผ่านแผงไฟ 12x8 LED Matrix ในตัวบอร์ดและจอ I2C LCD ให้รับรู้สภาพอากาศภายนอกได้ด้วยการเหลือบมอง โดยไม่ต้องสลับหน้าจอหรือหยิบสมาร์ทโฟนขึ้นมาดู</p>
+  </div>
+  <div class="device">
+    <canvas id="m" width="600" height="400" role="img" aria-label="จำลองแผง LED Matrix 12x8"></canvas>
+    <p id="readout" aria-live="polite"></p>
+    <div id="chips" class="chips" role="group" aria-label="ช่วงเวลาพยากรณ์"></div>
+    <form id="src" class="src">
+      <label for="url">ที่อยู่ Aggregator</label>
+      <input id="url" type="url" placeholder="http://localhost:3000/" autocomplete="off">
+      <button type="submit">เชื่อมต่อ</button>
+    </form>
+    <p id="status" class="status">แสดงข้อมูลตัวอย่าง</p>
+  </div>
+</section>
+
+<section id="features">
+  <h2>Features</h2>
+  <h3>1. รายงานสภาพอากาศและอุณหภูมิปัจจุบัน</h3>
+  <p>ดึงข้อมูลสภาพอากาศภายนอกและอุณหภูมิ (°C) อัตโนมัติทุก 10 นาทีผ่าน Wi-Fi แสดงไอคอน Pixel Art บน LED Matrix ได้แก่ แดดออก มีเมฆ ฝนตก และฟ้าผ่า/พายุ รวมถึงอุณหภูมิและเปอร์เซ็นต์โอกาสเกิดฝนตก โดยวนแสดงไอคอน (3 วินาที) อุณหภูมิ (2 วินาที) และแจ้งเตือนโอกาสฝนตก (3 วินาที เฉพาะเมื่อ PoP มากกว่า 50%)</p>
+  <h3>2. พยากรณ์สภาพอากาศล่วงหน้า</h3>
+  <p>ตรวจจับความน่าจะเป็นของฝน (PoP) ในชั่วโมงถัดไป และเตือนอัตโนมัติเมื่อสูงเกินเกณฑ์ 50%</p>
+  <h3>3. ปุ่มกดสลับดูช่วงเวลาพยากรณ์</h3>
+  <p>กดปุ่มเพื่อดูพยากรณ์ล่วงหน้าได้ 9 ช่วงเวลา ได้แก่ Now, +1h, +3h, +5h, +12h, +1d, +2d, +3d และ +4d หากไม่กดปุ่มภายใน 20 วินาที ระบบจะกลับมาที่ Now อัตโนมัติ</p>
+  <h3>4. สถาปัตยกรรม Micro-Aggregator (BFF Pattern)</h3>
+  <p>ใช้ Cloudflare Worker ดึงข้อมูลขนาดใหญ่จาก Open-Meteo แล้วย่อให้เหลือ JSON ขนาดประมาณ 60–300 bytes ช่วยป้องกันหน่วยความจำ RAM/Heap เต็มบนไมโครคอนโทรลเลอร์และลดภาระ HTTPS/TLS Handshake</p>
+  <h3>5. ออกแบบตามมาตรฐานระบบฝังตัว</h3>
+  <p>ทำงานด้วย Finite State Machine แบบ Non-blocking (ใช้ <code>millis()</code>) ไม่จองหน่วยความจำแบบไดนามิก (Zero dynamic heap allocation) และจำกัดขอบเขตการวนลูป (Bounded loops)</p>
+</section>
+
+<section id="hardware">
+  <h2>อุปกรณ์ที่ใช้ในโครงงาน</h2>
+  <table>
+    <tr><th scope="row">Arduino UNO R4 WiFi</th><td>ไมโครคอนโทรลเลอร์หลัก (Renesas RA4M1 + ESP32-S3) พร้อมโมดูล Wi-Fi และ LED Matrix 12x8 ในตัว</td></tr>
+    <tr><th scope="row">เบรดบอร์ด</th><td>แผงต่อวงจรสำหรับเชื่อมต่อปุ่มกดและสายสัญญาณ</td></tr>
+    <tr><th scope="row">ปุ่มกด</th><td>สวิตช์สำหรับกดเปลี่ยนโหมดและดูพยากรณ์ล่วงหน้า (ต่อที่ขา D2)</td></tr>
+    <tr><th scope="row">สายจัมเปอร์</th><td>เชื่อมต่อระหว่าง Arduino, เบรดบอร์ด, ปุ่มกด และจอ LCD</td></tr>
+    <tr><th scope="row">จอ LCD 1602 / 2004 พร้อมโมดูล I2C</th><td>แสดงข้อความสถานะ อุณหภูมิ และคำอธิบายสภาพอากาศแบบละเอียด</td></tr>
+  </table>
+</section>
+
+<section id="wiring">
+  <h2>แผนผังการต่อวงจรเบื้องต้น</h2>
+  <div class="cols">
+    <div>
+      <h3>ปุ่มกด</h3>
+      <p>ขาข้างหนึ่งต่อเข้า <strong>D2</strong> ขาอีกข้างต่อเข้า <strong>GND</strong> โค้ดเปิด Internal Pull-up (<code>INPUT_PULLUP</code>) ไว้แล้ว จึงไม่ต้องใช้ตัวต้านทานภายนอก</p>
+    </div>
+    <div>
+      <h3>จอ LCD (I2C)</h3>
+      <p>GND ต่อ GND, VCC ต่อ 5V, SDA ต่อ SDA (A4), SCL ต่อ SCL (A5) ค่าเริ่มต้น <code>LCD_I2C_ADDR</code> คือ <code>0x27</code> ใน <code>include/Config.h</code> ถ้าใช้ชิป PCF8574AT ให้เปลี่ยนเป็น <code>0x3F</code></p>
+    </div>
+  </div>
+  <h3>ไลบรารีที่ใช้งาน</h3>
+  <p><code>bblanchon/ArduinoJson@^7.0.0</code> สำหรับแปลงข้อมูล JSON จาก Micro-Aggregator และ <code>marcoschwartz/LiquidCrystal_I2C@^1.1.4</code> สำหรับควบคุมจอ LCD ผ่านบัส I2C PlatformIO ติดตั้งให้อัตโนมัติจาก <code>platformio.ini</code></p>
+</section>
+
+<section id="start">
+  <h2>การติดตั้งและใช้งาน</h2>
+  <div class="cols">
+    <div>
+      <h3>1. ฝั่ง Cloud Micro-Aggregator</h3>
+      <p>วิธีที่ 1: Deploy ขึ้น Cloudflare Worker (แนะนำสำหรับใช้งานจริง)</p>
+<pre><code>cd worker
+npm install
+npx wrangler deploy</code></pre>
+      <p>วิธีที่ 2: รันเซิร์ฟเวอร์จำลองบนเครื่อง (สำหรับทดสอบ)</p>
+<pre><code>cd worker
+npm install
+node dev-server.js</code></pre>
+    </div>
+    <div>
+      <h3>2. ฝั่งฮาร์ดแวร์และเฟิร์มแวร์</h3>
+      <p>ใช้ <a href="https://platformio.org/">PlatformIO</a> บน VS Code คัดลอก <code>include/secrets.example.h</code> เป็น <code>include/secrets.h</code> แล้วตั้งค่า</p>
+      <p><code>WIFI_SSID</code> และ <code>WIFI_PASSWORD</code> คือชื่อและรหัสผ่าน Wi-Fi<br><code>AGGREGATOR_HOST</code> ใส่เฉพาะโดเมนหรือ IP โดยไม่ต้องมี https://<br><code>AGGREGATOR_PORT</code> ใช้ 443 (HTTPS) หรือ 3000 (เซิร์ฟเวอร์จำลอง)<br><code>AGGREGATOR_PATH</code> ค่าเริ่มต้นคือ "/"<br><code>AGGREGATOR_USE_SSL</code> ใช้ true กับ Cloudflare Worker และ false กับเซิร์ฟเวอร์จำลอง</p>
+      <p>ต่อสาย USB กด Upload แล้วเปิด Serial Monitor ที่ Baud rate 115200</p>
+    </div>
+  </div>
+</section>
+
+<section id="source">
+  <h2>ซอร์สโค้ด</h2>
+  <p>โค้ดทั้งหมดของเฟิร์มแวร์และ Worker จาก repository นี้ <a id="gh" href="https://github.com/SlightlyOffset/AmbiDesk">เปิดบน GitHub</a></p>
+  <div id="files" class="files" role="group" aria-label="ไฟล์ซอร์สโค้ด"></div>
+  <pre id="code" tabindex="0"><code>กำลังโหลด…</code></pre>
+</section>
+
+<section id="team">
+  <h2>สมาชิกกลุ่ม</h2>
+  <ul class="team">
+    <li><strong>กฤตภาส ไพรสาลี</strong> ออกแบบโปสเตอร์ (A1 Poster)</li>
+    <li><strong>ชนาธิป วาฑิตศุภผล</strong> พัฒนาเว็บไซต์ (Website)</li>
+    <li><strong>ฐิติวัฒน์ มนต์วิเศษ</strong> ระบบหลังบ้านและเฟิร์มแวร์ (Back-end &amp; Firmware)</li>
+    <li><strong>นัธทวัฒน์ พละเดช</strong> ระบบหลังบ้านและเฟิร์มแวร์ (Back-end &amp; Firmware)</li>
+  </ul>
+</section>
+</main>
+
+<footer><p>AmbiDesk Phase 1 MVP ข้อมูลสภาพอากาศจาก <a href="https://open-meteo.com/">Open-Meteo</a> · <a href="https://github.com/SlightlyOffset/AmbiDesk">ซอร์สโค้ดบน GitHub</a></p></footer>
+<script src="app.js"></script>
+</body>
+</html>
