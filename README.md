@@ -109,5 +109,7 @@
 ---
 
 # Project Poster
+<img width="2245" height="3179" alt="AmbiDesk - Ambient Workspace Weather   Forecast Companion" src="https://github.com/user-attachments/assets/d14390e9-e65d-408c-8410-95336e76fd63" />
 
-![Project Poster](AmbiDesk - Ambient Workspace Weather & Forecast Companion.png)
+---
+
