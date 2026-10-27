@@ -2,6 +2,8 @@
 
 **AmbiDesk** คืออุปกรณ์ตั้งโต๊ะอัจฉริยะ (Ambient Computing Companion) ที่ช่วยรายงานสภาพอากาศ อุณหภูมิ และพยากรณ์ความน่าจะเป็นของฝนแบบ Real-time โดยแสดงผลผ่านแผงไฟ **12x8 LED Matrix** ในตัวบอร์ด และจอ **I2C LCD** ช่วยให้ผู้ใช้งานรับรู้สภาพอากาศภายนอกได้ทันทีด้วยการเหลือบมอง (Glanceable) โดยไม่ต้องสลับหน้าจอคอมพิวเตอร์หรือหยิบสมาร์ทโฟนขึ้นมาดูให้เสียสมาธิขณะทำงานหรือเล่นเกม
 
+🌐 **เว็บไซต์จำลองการทำงาน (Live Demo & Source Viewer):** [https://ambidesk-pages.slightlyoffset.workers.dev/#team](https://ambidesk-pages.slightlyoffset.workers.dev/#team)
+
 ---
 
 ## ความสามารถของโปรเจกต์ (Features)
@@ -109,7 +111,6 @@
 ---
 
 # Project Poster
-<img width="2245" height="3179" alt="AmbiDesk - Ambient Workspace Weather   Forecast Companion (1)" src="https://github.com/user-attachments/assets/749d53f2-86c6-43d3-8418-0f967725fc44" />
-
+![Project Poster](doc/AmbiDesk.png)
 ---
 

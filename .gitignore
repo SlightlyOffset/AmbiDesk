@@ -5,3 +5,4 @@ include/secrets.h
 worker/node_modules
 .wrangler
 .vscode
+website/source/
