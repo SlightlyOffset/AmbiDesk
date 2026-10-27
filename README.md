@@ -109,6 +109,6 @@
 ---
 
 # Project Poster
-![Project Poster]("doc/AmbiDesk - Ambient Workspace Weather & Forecast Companion.png")
+![Project Poster](doc/AmbiDesk.png)
 ---
 
